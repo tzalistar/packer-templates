@@ -1,0 +1,203 @@
+#### Debian Trixie (Testing) Preseed Configuration
+#### Automated installation with custom LVM partitioning
+
+### Localization
+d-i debian-installer/language string en
+d-i debian-installer/country string US
+d-i debian-installer/locale string en_US.UTF-8
+d-i localechooser/supported-locales multiselect en_US.UTF-8
+
+### Keyboard
+d-i keyboard-configuration/xkb-keymap select us
+
+### Network configuration
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_hostname string debian-template
+d-i netcfg/get_domain string local
+d-i netcfg/wireless_wep string
+
+### Mirror settings
+d-i mirror/country string manual
+d-i mirror/http/hostname string deb.debian.org
+d-i mirror/http/directory string /debian
+d-i mirror/http/proxy string
+
+### Account setup
+# Skip root password, we'll create users instead
+d-i passwd/root-login boolean false
+
+# Create default user
+d-i passwd/user-fullname string ${default_user}
+d-i passwd/username string ${default_user}
+d-i passwd/user-password-crypted password ${default_user_password}
+d-i passwd/user-default-groups string sudo
+d-i passwd/user-uid string 1000
+
+### Clock and time zone
+d-i clock-setup/utc boolean true
+d-i time/zone string UTC
+d-i clock-setup/ntp boolean true
+
+### Partitioning - Custom LVM schema
+d-i partman-auto/disk string /dev/sda
+d-i partman-auto/method string lvm
+d-i partman-auto-lvm/guided_size string max
+d-i partman-lvm/device_remove_lvm boolean true
+d-i partman-md/device_remove_md boolean true
+d-i partman-lvm/confirm boolean true
+d-i partman-lvm/confirm_nooverwrite boolean true
+d-i partman-basicfilesystems/choose_label string gpt
+d-i partman-basicfilesystems/default_label string gpt
+d-i partman-partitioning/choose_label string gpt
+d-i partman-partitioning/default_label string gpt
+d-i partman/choose_label string gpt
+d-i partman/default_label string gpt
+
+# Custom LVM partition recipe
+d-i partman-auto/expert_recipe string \
+  boot-lvm :: \
+    512 512 512 fat32 \
+      $iflabel{ gpt } \
+      $reusemethod{ } \
+      method{ efi } \
+      format{ } \
+    . \
+    512 512 512 ext4 \
+      $primary{ } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ /boot } \
+    . \
+    1000 10000 10000000000 ext4 \
+      $defaultignore{ } \
+      $primary{ } \
+      method{ lvm } \
+      vg_name{ vg0 } \
+    . \
+    10240 10240 10240 ext4 \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ root } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ / } \
+    . \
+    5120 5120 5120 ext4 \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ home } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ /home } \
+    . \
+    5120 5120 5120 ext4 \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ var } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ /var } \
+    . \
+    3072 3072 3072 ext4 \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ var_log } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ /var/log } \
+    . \
+    2048 2048 2048 ext4 \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ opt } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ /opt } \
+    . \
+    5120 5120 5120 ext4 \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ var_tmp } \
+      method{ format } \
+      format{ } \
+      use_filesystem{ } \
+      filesystem{ ext4 } \
+      mountpoint{ /var/tmp } \
+    . \
+    2048 2048 2048 linux-swap \
+      $lvmok{ } \
+      in_vg{ vg0 } \
+      lv_name{ swap } \
+      method{ swap } \
+      format{ } \
+    .
+
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+
+### Base system installation
+d-i base-installer/install-recommends boolean false
+d-i base-installer/kernel/image string linux-image-amd64
+
+### Package selection
+tasksel tasksel/first multiselect standard, ssh-server
+d-i pkgsel/include string openssh-server sudo qemu-guest-agent cloud-init grub-efi-amd64 efibootmgr
+d-i pkgsel/upgrade select full-upgrade
+popularity-contest popularity-contest/participate boolean false
+
+### Boot loader installation
+d-i grub-installer/only_debian boolean true
+d-i grub-installer/with_other_os boolean true
+d-i grub-installer/bootdev string /dev/sda
+d-i grub-installer/force-efi-extra-removable boolean true
+
+### Finishing up
+# Allow reboot after installation so Packer can connect via SSH
+d-i debian-installer/exit/poweroff boolean false
+d-i finish-install/reboot_in_progress note
+
+### Late commands - User setup and final configuration
+d-i preseed/late_command string \
+  in-target mkdir -p /home/${default_user}/.ssh; \
+  in-target chmod 700 /home/${default_user}/.ssh; \
+  in-target chown ${default_user}:${default_user} /home/${default_user}/.ssh; \
+  echo '${default_user_ssh_key}' > /target/home/${default_user}/.ssh/authorized_keys; \
+  in-target chmod 600 /home/${default_user}/.ssh/authorized_keys; \
+  in-target chown ${default_user}:${default_user} /home/${default_user}/.ssh/authorized_keys; \
+  echo '${default_user} ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/${default_user}; \
+  in-target chmod 440 /etc/sudoers.d/${default_user}; \
+  in-target useradd -m -s /bin/bash -G sudo ${ansible_user}; \
+  in-target usermod -p '${ansible_user_password}' ${ansible_user}; \
+  in-target mkdir -p /home/${ansible_user}/.ssh; \
+  in-target chmod 700 /home/${ansible_user}/.ssh; \
+  in-target chown ${ansible_user}:${ansible_user} /home/${ansible_user}/.ssh; \
+  echo '${ansible_user_ssh_key}' > /target/home/${ansible_user}/.ssh/authorized_keys; \
+  in-target chmod 600 /home/${ansible_user}/.ssh/authorized_keys; \
+  in-target chown ${ansible_user}:${ansible_user} /home/${ansible_user}/.ssh/authorized_keys; \
+  echo '${ansible_user} ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/${ansible_user}; \
+  in-target chmod 440 /etc/sudoers.d/${ansible_user}; \
+  echo 'tmpfs /tmp tmpfs defaults,noatime,nosuid,nodev,mode=1777,size=2G 0 0' >> /target/etc/fstab; \
+  echo 'auto eth0' >> /target/etc/network/interfaces; \
+  echo 'iface eth0 inet dhcp' >> /target/etc/network/interfaces; \
+  in-target systemctl enable networking; \
+  sed -i '/^deb cdrom:/d' /target/etc/apt/sources.list; \
+  in-target sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="quiet console=tty0 console=ttyS0,115200 net.ifnames=0 biosdevname=0"/' /etc/default/grub; \
+  in-target update-grub; \
+  in-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck --no-floppy; \
+  in-target systemctl enable qemu-guest-agent; \
+  in-target systemctl enable ssh; \
+  eject || true;
